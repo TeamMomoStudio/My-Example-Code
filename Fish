@@ -1,0 +1,220 @@
+using UnityEngine;
+
+/// <summary>
+/// Simple fish AI: Wander near start, flee from player when detected, and return to start if far away.
+/// Optimized: caches player reference and avoids FindGameObjectWithTag every frame.
+/// </summary>
+public class NormalFish : MonoBehaviour
+{
+    private enum State { Wander, ReturnToStart, Flee }
+
+    [Header("References")]
+    [Tooltip("Optional. If not set, the script will try to find Player by tag periodically.")]
+    [SerializeField] private Transform player;
+
+    [Tooltip("Fallback search tag if 'player' is not assigned.")]
+    [SerializeField] private string playerTag = "Player";
+
+    [Header("Detection")]
+    [SerializeField, Min(0f)] private float lookAreaRadius = 5f;
+
+    [Header("Movement")]
+    [SerializeField, Min(0f)] private float moveSpeed = 3f;
+    [SerializeField, Min(0f)] private float idleRadius = 3f;
+    [SerializeField, Min(0.01f)] private float idleChangeTime = 2f;
+    [SerializeField, Min(0.001f)] private float returnThreshold = 0.2f;
+    [SerializeField, Range(0.05f, 1f)] private float wanderSpeedMultiplier = 0.5f;
+
+    [Header("Idle Stop (Wander)")]
+    [SerializeField, Min(0f)] private float stopDuration = 0.5f;
+
+    [Header("Optimization")]
+    [Tooltip("AI updates only when player is within this distance.")]
+    [SerializeField, Min(0f)] private float activeDistance = 20f;
+
+    [Tooltip("How often to try re-acquiring player reference (seconds).")]
+    [SerializeField, Min(0.1f)] private float reacquireInterval = 1f;
+
+    private Vector2 startPosition;
+    private Vector2 wanderTarget;
+
+    private State state = State.Wander;
+
+    private float changeTimer;
+    private float stopTimer;
+    private bool isStopping;
+
+    private float reacquireTimer;
+
+    private void Awake()
+    {
+        startPosition = transform.position;
+        PickNewWanderTarget();
+    }
+
+    private void Update()
+    {
+        // Try to find player if not assigned (and not too often).
+        ReacquirePlayerIfNeeded();
+
+        // If we don't have a player reference, we can still wander without optimization check.
+        if (player != null && !IsPlayerWithin(activeDistance))
+            return;
+
+        UpdateState();
+
+        switch (state)
+        {
+            case State.Flee:
+                TickFlee();
+                break;
+
+            case State.ReturnToStart:
+                TickReturnToStart();
+                break;
+
+            case State.Wander:
+                TickWander();
+                break;
+        }
+    }
+
+    // ---------------- State & Detection ----------------
+
+    private void UpdateState()
+    {
+        if (player != null && IsPlayerWithin(lookAreaRadius))
+        {
+            state = State.Flee;
+            return;
+        }
+
+        // Player not in detection range (or missing).
+        if (state == State.Flee)
+        {
+            // If we fled far from home, return. Otherwise, resume wandering.
+            state = DistanceToStart() > idleRadius * 0.6f ? State.ReturnToStart : State.Wander;
+
+            if (state == State.Wander)
+                PickNewWanderTarget();
+
+            return;
+        }
+
+        if (state == State.ReturnToStart && DistanceToStart() <= returnThreshold)
+        {
+            state = State.Wander;
+            PickNewWanderTarget();
+        }
+    }
+
+    private bool IsPlayerWithin(float radius)
+    {
+        // squared distance is cheaper than Distance()
+        float sqrDist = ((Vector2)transform.position - (Vector2)player.position).sqrMagnitude;
+        return sqrDist <= radius * radius;
+    }
+
+    private float DistanceToStart()
+    {
+        return Vector2.Distance(transform.position, startPosition);
+    }
+
+    // ---------------- Movement Ticks ----------------
+
+    private void TickFlee()
+    {
+        if (player == null) return;
+
+        Vector2 awayDir = ((Vector2)transform.position - (Vector2)player.position).normalized;
+        Vector2 nextPos = (Vector2)transform.position + awayDir * moveSpeed * Time.deltaTime;
+        transform.position = nextPos;
+    }
+
+    private void TickReturnToStart()
+    {
+        Vector2 nextPos = Vector2.MoveTowards(
+            transform.position,
+            startPosition,
+            moveSpeed * Time.deltaTime
+        );
+
+        transform.position = nextPos;
+    }
+
+    private void TickWander()
+    {
+        // Optional small idle stop between direction changes to look more natural.
+        if (isStopping)
+        {
+            stopTimer -= Time.deltaTime;
+            if (stopTimer <= 0f)
+                isStopping = false;
+
+            return;
+        }
+
+        changeTimer += Time.deltaTime;
+
+        bool reachedTarget = Vector2.Distance(transform.position, wanderTarget) <= 0.05f;
+        bool timeToChange = changeTimer >= idleChangeTime;
+
+        if (reachedTarget || timeToChange)
+        {
+            PickNewWanderTarget();
+            changeTimer = 0f;
+
+            if (stopDuration > 0f)
+            {
+                isStopping = true;
+                stopTimer = stopDuration;
+            }
+
+            return;
+        }
+
+        float speed = moveSpeed * wanderSpeedMultiplier;
+        transform.position = Vector2.MoveTowards(transform.position, wanderTarget, speed * Time.deltaTime);
+    }
+
+    private void PickNewWanderTarget()
+    {
+        wanderTarget = startPosition + Random.insideUnitCircle * idleRadius;
+    }
+
+    // ---------------- Player Reference ----------------
+
+    private void ReacquirePlayerIfNeeded()
+    {
+        if (player != null) return;
+
+        reacquireTimer += Time.deltaTime;
+        if (reacquireTimer < reacquireInterval) return;
+
+        reacquireTimer = 0f;
+
+        GameObject p = GameObject.FindGameObjectWithTag(playerTag);
+        if (p != null)
+            player = p.transform;
+    }
+
+    // ---------------- Debug ----------------
+
+    private void OnDrawGizmosSelected()
+    {
+        Gizmos.color = Color.yellow;
+        Gizmos.DrawWireSphere(Application.isPlaying ? (Vector3)startPosition : transform.position, idleRadius);
+
+        Gizmos.color = Color.red;
+        Gizmos.DrawWireSphere(transform.position, lookAreaRadius);
+
+        Gizmos.color = Color.cyan;
+        Gizmos.DrawWireSphere(transform.position, activeDistance);
+
+        if (Application.isPlaying)
+        {
+            Gizmos.color = Color.green;
+            Gizmos.DrawSphere(wanderTarget, 0.08f);
+        }
+    }
+}
