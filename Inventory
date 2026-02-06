@@ -1,0 +1,187 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using UnityEngine;
+
+public class Inventory : MonoBehaviour
+{
+    public event Action OnInventoryChanged;
+
+    [Header("Config")]
+    [SerializeField] private int capacity = 20;
+
+    [Header("Runtime Data")]
+    [SerializeField] private List<InventorySlot> slots = new();
+
+    private PlayerData player;
+
+    private void Awake()
+    {
+        player = GetComponent<PlayerData>();
+
+        slots.Clear();
+        for (int i = 0; i < capacity; i++)
+            slots.Add(new InventorySlot());
+    }
+
+    public bool AddItem(ItemDataSO item, int amount = 1)
+    {
+        if (item == null || amount <= 0) return false;
+
+        // 1) Try stack first
+        foreach (var slot in slots)
+        {
+            if (slot.IsEmpty) continue;
+            if (slot.item != item) continue;
+            if (slot.amount >= item.MaxStack) continue;
+
+            slot.amount = Mathf.Min(slot.amount + amount, item.MaxStack);
+            SortInventory();
+            return true;
+        }
+
+        // 2) Find empty slot
+        foreach (var slot in slots)
+        {
+            if (!slot.IsEmpty) continue;
+
+            slot.item = item;
+            slot.amount = Mathf.Min(amount, item.MaxStack);
+            SortInventory();
+            return true;
+        }
+
+        return false;
+    }
+
+    public void UseItem(int slotIndex)
+    {
+        if (slotIndex < 0 || slotIndex >= slots.Count) return;
+
+        var slot = slots[slotIndex];
+        if (slot.IsEmpty) return;
+
+        var item = slot.item; // cache
+
+        if (item is not IUsableItem usable) return;
+
+        usable.Use(player);
+
+        // Consume only for Consumable type
+        if (item.itemType == ItemType.Consumable)
+        {
+            slot.amount--;
+            if (slot.amount <= 0)
+                slot.Clear();
+
+            SortInventory();
+        }
+
+        Debug.Log($"Using item: {item.name}, type: {item.itemType}");
+    }
+
+    public bool RemoveItem(ItemDataSO item, int amount = 1)
+    {
+        if (item == null || amount <= 0) return false;
+
+        foreach (var slot in slots)
+        {
+            if (slot.IsEmpty) continue;
+            if (slot.item != item) continue;
+            if (slot.amount < amount) continue;
+
+            slot.amount -= amount;
+            if (slot.amount <= 0)
+                slot.Clear();
+
+            NotifyChange();
+            return true;
+        }
+
+        return false;
+    }
+
+    public InventorySaveData GetSaveData()
+    {
+        var data = new InventorySaveData
+        {
+            slots = new List<InventorySlotSaveData>()
+        };
+
+        foreach (var slot in slots)
+        {
+            if (slot.IsEmpty) continue;
+
+            data.slots.Add(new InventorySlotSaveData
+            {
+                itemId = slot.item.id,
+                amount = slot.amount
+            });
+        }
+
+        return data;
+    }
+
+    public void LoadFromData(InventorySaveData data, ItemDatabaseSO database)
+    {
+        if (data == null || database == null) return;
+
+        foreach (var slot in slots)
+            slot.Clear();
+
+        int count = Mathf.Min(data.slots.Count, slots.Count);
+
+        for (int i = 0; i < count; i++)
+        {
+            var saved = data.slots[i];
+            var item = database.GetItem(saved.itemId);
+            if (item == null) continue;
+
+            slots[i].item = item;
+            slots[i].amount = saved.amount;
+        }
+
+        NotifyChange();
+    }
+
+    public void SortInventory()
+    {
+        // snapshot (item, amount) to avoid keeping slot references
+        var filled = slots
+            .Where(s => !s.IsEmpty)
+            .Select(s => (item: s.item, amount: s.amount))
+            .ToList();
+
+        // equipment first: Weapon -> Armor
+        var equipment = filled
+            .Where(x => x.item.itemType is ItemType.Weapon or ItemType.Armor)
+            .OrderBy(x => x.item.itemType == ItemType.Weapon ? 0 : 1)
+            .ThenBy(x => x.item.id);
+
+        // rest: Consumable -> Material (then amount desc)
+        var rest = filled
+            .Where(x => x.item.itemType is ItemType.Consumable or ItemType.Material)
+            .OrderBy(x => x.item.itemType == ItemType.Consumable ? 0 : 1)
+            .ThenByDescending(x => x.amount)
+            .ThenBy(x => x.item.id);
+
+        var sorted = equipment.Concat(rest).ToList();
+
+        for (int i = 0; i < slots.Count; i++)
+        {
+            if (i < sorted.Count)
+            {
+                slots[i].item = sorted[i].item;
+                slots[i].amount = sorted[i].amount;
+            }
+            else
+            {
+                slots[i].Clear();
+            }
+        }
+
+        NotifyChange();
+    }
+
+    private void NotifyChange() => OnInventoryChanged?.Invoke();
+}
