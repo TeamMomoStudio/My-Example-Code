@@ -1,0 +1,98 @@
+using System.Collections;
+using UnityEngine;
+
+/// <summary>
+/// Minimal VN runner: handles Dialogue + Choice nodes.
+/// Clean & portfolio-friendly: single responsibility, safe coroutine handling, easy to extend.
+/// </summary>
+public class VNRunner : MonoBehaviour
+{
+    [Header("Story")]
+    [SerializeField] private VNStorySO story;
+
+    [Header("UI")]
+    [SerializeField] private DialogueUI dialogueUI;
+    [SerializeField] private ChoiceUI choiceUI;
+
+    private VNNodeSO current;
+    private Coroutine showRoutine;
+
+    private void Start()
+    {
+        StartStory(story);
+    }
+
+    public void StartStory(VNStorySO newStory)
+    {
+        story = newStory;
+        current = story != null ? story.startNode : null;
+        ShowCurrent();
+    }
+
+    /// <summary>External input can call this (Space/Click) to advance dialogue.</summary>
+    public void Advance()
+    {
+        if (current == null) return;
+
+        if (current.type == VNNodeType.Dialogue)
+            dialogueUI.PressAdvance(); // DialogueUI decides: reveal fast or go next
+    }
+
+    private void ShowCurrent()
+    {
+        StopShowRoutineIfNeeded();
+
+        if (current == null)
+        {
+            dialogueUI.Hide();
+            choiceUI.Hide();
+            return;
+        }
+
+        switch (current.type)
+        {
+            case VNNodeType.Dialogue:
+                choiceUI.Hide();
+                dialogueUI.Hide(); // hide first to support optional delay
+                showRoutine = StartCoroutine(ShowDialogueRoutine(current));
+                break;
+
+            case VNNodeType.Choice:
+                dialogueUI.Hide();
+                choiceUI.Show(current.choices, OnPickChoice);
+                break;
+        }
+    }
+
+    private IEnumerator ShowDialogueRoutine(VNNodeSO node)
+    {
+        float delay = Mathf.Max(0f, node.delayBeforeDialogue);
+        if (delay > 0f) yield return new WaitForSeconds(delay);
+
+        // If node changed while waiting, abort safely
+        if (current != node) yield break;
+
+        dialogueUI.BindNext(NextNode);
+        dialogueUI.Show(node.speaker, node.text);
+    }
+
+    private void NextNode()
+    {
+        current = current != null ? current.next : null;
+        ShowCurrent();
+    }
+
+    private void OnPickChoice(VNChoice choice)
+    {
+        // minimal: go to choice.nextNode (or null)
+        current = choice != null ? choice.nextNode : null;
+        ShowCurrent();
+    }
+
+    private void StopShowRoutineIfNeeded()
+    {
+        if (showRoutine == null) return;
+        StopCoroutine(showRoutine);
+        showRoutine = null;
+    }
+}
