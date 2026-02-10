@@ -1,0 +1,21 @@
+using UnityEngine;
+
+public class Bullet : MonoBehaviour
+{
+    private ObjectPool pool;
+
+    public void Init(ObjectPool objectPool)
+    {
+        pool = objectPool;
+    }
+
+    private void OnEnable()
+    {
+        Invoke(nameof(Return), 2f); // อายุ 2 วิ
+    }
+
+    private void Return()
+    {
+        pool.ReturnToPool(gameObject);
+    }
+}

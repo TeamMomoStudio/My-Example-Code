@@ -1,0 +1,14 @@
+using UnityEngine;
+
+public class BulletSpawner : MonoBehaviour
+{
+    [SerializeField] private ObjectPool bulletPool;
+    [SerializeField] private Transform firePoint;
+
+    public void Fire()
+    {
+        GameObject bullet = bulletPool.Get();
+        bullet.transform.position = firePoint.position;
+        bullet.transform.rotation = firePoint.rotation;
+    }
+}

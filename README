@@ -1,0 +1,8 @@
+## Simple Object Pool (Unity)
+
+A lightweight object pooling example for bullets or effects.
+- Avoids frequent Instantiate/Destroy calls
+- Uses Queue for reuse
+- Suitable for combat-heavy games
+
+Used in gameplay systems such as auto-combat and enemy attacks.
